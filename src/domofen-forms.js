@@ -20,7 +20,7 @@
   var CONFIG = {
     // n8n webhooks (remplacent les URLs Make.com)
     PREFILL_URL: 'https://n8n.domofen.ch/webhook/intranet/prefill',
-    SAVE_DRAFT_URL: 'https://n8n.domofen.ch/webhook/intranet/draft-save',
+    SAVE_DRAFT_URL: 'https://n8n.domofen.ch/webhook/intranet/draft',
     SUBMIT_URL: 'https://n8n.domofen.ch/webhook/intranet/submit',
 
     // Selecteurs DOM
