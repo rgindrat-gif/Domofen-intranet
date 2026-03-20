@@ -1186,28 +1186,11 @@
       return el ? (el.textContent || '').trim() : ''
     },
 
-    _serializing: false,
-
-    /** Trigger a synthetic submit to force positionSerializer to run */
+    /** Serialize positions directly (no synthetic submit event needed) */
     ensurePositionsSerialized: function () {
-      if (this._serializing) {
-        return {
-          positions_json: this.get('positions_json') || '',
-          positions_count: this.get('positions_count') || ''
-        }
-      }
-      this._serializing = true
-      var prevNoValidate = this.form.noValidate
-      var hadAttr = this.form.hasAttribute('novalidate')
-      this.form.noValidate = true
-      if (!hadAttr) this.form.setAttribute('novalidate', '')
       try {
-        var evt = new Event('submit', { bubbles: true, cancelable: true })
-        this.form.dispatchEvent(evt)
+        positionSerializer.handleSubmit({ target: this.form })
       } catch (e) { /* ignore */ }
-      this.form.noValidate = prevNoValidate
-      if (!hadAttr) this.form.removeAttribute('novalidate')
-      this._serializing = false
       return {
         positions_json: this.get('positions_json') || '',
         positions_count: this.get('positions_count') || ''
@@ -1419,8 +1402,6 @@
 
       // Intercept submit in capture phase (before Webflow)
       form.addEventListener('submit', function (e) {
-        // Skip if this is a synthetic submit from ensurePositionsSerialized
-        if (draftSave._serializing) return
         e.preventDefault()
         e.stopImmediatePropagation()
         self.handleDirectSubmit()
