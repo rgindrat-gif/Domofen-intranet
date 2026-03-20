@@ -67,6 +67,16 @@
   // HELPERS
   // ---------------------------------------------------------------------------
 
+  /** fetch with AbortController timeout (prevents UI freeze if server is slow) */
+  function fetchWithTimeout(url, options, timeoutMs) {
+    timeoutMs = timeoutMs || 30000
+    var controller = new AbortController()
+    var timer = setTimeout(function () { controller.abort() }, timeoutMs)
+    options = options || {}
+    options.signal = controller.signal
+    return fetch(url, options).finally(function () { clearTimeout(timer) })
+  }
+
   /** querySelector shortcut */
   function qs(sel, ctx) { return (ctx || document).querySelector(sel) }
 
@@ -845,16 +855,25 @@
       var self = this
       setHidden(this.form, 'member_stack_id', memberId || '')
 
-      fetch(CONFIG.PREFILL_URL + '?rec=' + encodeURIComponent(rec), {
+      fetchWithTimeout(CONFIG.PREFILL_URL + '?rec=' + encodeURIComponent(rec), {
         method: 'GET',
         headers: { 'x-member-id': memberId || '' }
-      })
+      }, 15000)
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status)
           return res.json()
         })
         .then(function (data) { self.applyPrefillToForm(data) })
-        .catch(function (err) { console.error('[Prefill] fetch error', err) })
+        .catch(function (err) {
+          console.error('[Prefill] fetch error', err)
+          if (err.name === 'AbortError') {
+            var failMsg = self.form.closest('.w-form') && self.form.closest('.w-form').querySelector('.w-form-fail')
+            if (failMsg) {
+              failMsg.textContent = 'Impossible de charger les donn\u00e9es. Veuillez rafra\u00eechir la page.'
+              failMsg.style.display = 'block'
+            }
+          }
+        })
     },
 
     /** Apply fetched fields to the form */
@@ -1359,11 +1378,11 @@
         requiredFields.forEach(function (el) { el.setAttribute('required', '') })
       }, 100)
 
-      fetch(CONFIG.SAVE_DRAFT_URL, {
+      fetchWithTimeout(CONFIG.SAVE_DRAFT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      })
+      }, 30000)
         .then(function (res) {
           return res.text().then(function (text) {
             var json = {}
@@ -1440,11 +1459,11 @@
         submitBtn.textContent = 'Envoi en cours...'
       }
 
-      fetch(CONFIG.SUBMIT_URL, {
+      fetchWithTimeout(CONFIG.SUBMIT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      })
+      }, 30000)
         .then(function (res) {
           return res.text().then(function (text) {
             var json = {}
