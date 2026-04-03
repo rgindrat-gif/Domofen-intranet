@@ -1395,7 +1395,12 @@
         .then(function (result) {
           console.log('[Draft] response', result.json)
           var rec = result.json && (result.json.rec || result.json.record_id || result.json.airtable_record_id)
+          var item = result.json && (result.json.item || result.json.webflow_item_id || '')
           if (rec) self.rewriteUrlWithRec(String(rec))
+          if (item) {
+            sessionStorage.setItem('domofen_item', String(item))
+            setHidden(self.form, 'webflow_item_id', String(item))
+          }
           alert(result.ok ? 'Brouillon enregistr\u00e9.' : "Impossible d'enregistrer le brouillon.")
         })
         .catch(function (err) {
