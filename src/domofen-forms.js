@@ -1427,6 +1427,13 @@
       this.flow = flow
       var self = this
 
+      // Block Enter key from triggering form submission (except in textarea and on submit button)
+      form.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter' && e.target.tagName !== 'TEXTAREA' && e.target.type !== 'submit') {
+          e.preventDefault()
+        }
+      })
+
       // Intercept submit in capture phase (before Webflow)
       form.addEventListener('submit', function (e) {
         e.preventDefault()
