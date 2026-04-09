@@ -1592,18 +1592,28 @@
       }
 
       if (form) {
-        // Fix Reference field: replace element to remove restrictive inline normalizer,
-        // then add a proper one that allows spaces and common characters
-        var refInput = form.querySelector('#Reference') || form.querySelector('[name="Reference"]')
-        if (refInput) {
-          var clone = refInput.cloneNode(true)
-          refInput.parentNode.replaceChild(clone, refInput)
-          clone.addEventListener('input', function () {
-            var v = clone.value
-            try { v = v.normalize('NFD').replace(/[\u0300-\u036f]/g, '') } catch (e) { /* ignore */ }
-            clone.value = v
-          })
-        }
+        // Fix Reference field: replace element to remove restrictive inline normalizer.
+        // Uses setTimeout(0) to ensure all DOMContentLoaded handlers (including the
+        // Webflow inline normalizer) have attached before we clone-replace the element.
+        var formRef = form
+        setTimeout(function () {
+          var refInput = formRef.querySelector('#Reference') || formRef.querySelector('[name="Reference"]')
+          if (refInput) {
+            var savedValue = refInput.value
+            var clone = refInput.cloneNode(true)
+            clone.value = savedValue
+            refInput.parentNode.replaceChild(clone, refInput)
+            clone.addEventListener('input', function () {
+              var v = clone.value
+              var pos = clone.selectionStart
+              try { v = v.normalize('NFD').replace(/[\u0300-\u036f]/g, '') } catch (e) { /* ignore */ }
+              if (v !== clone.value) {
+                clone.value = v
+                clone.selectionStart = clone.selectionEnd = pos
+              }
+            })
+          }
+        }, 0)
 
         prefill.init(form, flow)
         draftSave.init(form)
