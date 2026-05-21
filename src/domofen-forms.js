@@ -1569,11 +1569,73 @@
   }
 
   // ---------------------------------------------------------------------------
+  // MODULE 11 : errorReporterEnrichment (F-04 2026-05-21)
+  // Wraps window.__domofen_obs.log to enrich payload with memberstack data
+  // and form context, which the standalone observer does not capture.
+  // ---------------------------------------------------------------------------
+  var errorReporterEnrichment = {
+    init: function (flow) {
+      try {
+        if (!global.__domofen_obs || typeof global.__domofen_obs.log !== 'function') {
+          return
+        }
+        var origLog = global.__domofen_obs.log
+        global.__domofen_obs.log = function (d) {
+          try {
+            d = d || {}
+            // Memberstack enrichment from DOM (matches memberstackData module conventions)
+            var msEmail = qs('#ms_email_txt') || qs('[data-ms-content="email"]')
+            var msId = qs('[data-ms-member="id"]') || qs('#ms_member_id_txt')
+            if (msEmail && msEmail.textContent && !d.email) {
+              d.email = msEmail.textContent.trim()
+            }
+            if (msId && msId.textContent && !d.memberId) {
+              d.memberId = msId.textContent.trim()
+            }
+            // Memberstack v2 SDK fallback
+            if (!d.memberId && global.$memberstackDom && global.$memberstackDom.getCurrentMember) {
+              try {
+                var ms = global.$memberstackDom.getCurrentMember()
+                if (ms && ms.data) {
+                  d.memberId = d.memberId || ms.data.id
+                  d.email = d.email || (ms.data.auth && ms.data.auth.email)
+                }
+              } catch (e) { /* ignore */ }
+            }
+            // Form context fallback (rec from URL, flow from global)
+            if (!d.formId) {
+              var formEl = document.querySelector('form[name^="wf-form-"], form[id^="Demande_"], form[id^="Passer_"]')
+              if (formEl) {
+                d.formId = formEl.id || formEl.name || null
+              }
+            }
+            if (!d.referenceChantier) {
+              var refInput = document.querySelector('input[name="Reference"], #Reference')
+              if (refInput && refInput.value) d.referenceChantier = refInput.value
+            }
+            // Surface flow even when observer reads window.DomofenForms.flow already
+            if (!global.DomofenForms || !global.DomofenForms.flow) {
+              try { global.DomofenForms = global.DomofenForms || {}; global.DomofenForms.flow = flow } catch (e) { /* ignore */ }
+            }
+          } catch (e) { /* ignore enrichment failure */ }
+          return origLog(d)
+        }
+      } catch (e) { /* ignore */ }
+    }
+  }
+
+  // ---------------------------------------------------------------------------
   // ENTRY POINT
   // ---------------------------------------------------------------------------
   global.DomofenForms = {
     init: function (options) {
       var flow = (options && options.flow) || 'demande'
+
+      // Expose flow for the standalone observer (domofen_obs_frontend_errors)
+      global.DomofenForms.flow = flow
+
+      // Init error reporter enrichment FIRST so it captures any subsequent errors
+      errorReporterEnrichment.init(flow)
 
       // Init standalone modules
       colorSelectors.init()
