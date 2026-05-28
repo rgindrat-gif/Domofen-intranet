@@ -77,6 +77,24 @@
     return fetch(url, options).finally(function () { clearTimeout(timer) })
   }
 
+  /** UUID v4 (crypto with fallback for older browsers) */
+  function genId() {
+    try { if (window.crypto && crypto.randomUUID) return crypto.randomUUID() } catch (e) {}
+    return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function (c) {
+      var r = (Math.random() * 16) | 0, v = c === 'x' ? r : (r & 0x3) | 0x8
+      return v.toString(16)
+    })
+  }
+
+  /** localStorage backup of an unsent submit payload (so the entry is never lost on failure) */
+  var SUBMIT_BACKUP_KEY = 'domofen_pending_submit'
+  function saveSubmitBackup(payload) {
+    try { localStorage.setItem(SUBMIT_BACKUP_KEY, JSON.stringify({ ts: Date.now(), payload: payload })) } catch (e) {}
+  }
+  function clearSubmitBackup() {
+    try { localStorage.removeItem(SUBMIT_BACKUP_KEY) } catch (e) {}
+  }
+
   /** querySelector shortcut */
   function qs(sel, ctx) { return (ctx || document).querySelector(sel) }
 
@@ -1446,6 +1464,9 @@
       var self = this
       var form = self.form
 
+      // Guard: ignore re-clicks while a submit is already in flight (prevents double-submit / duplicate deals)
+      if (self._inFlight) return
+
       // HTML5 validation
       if (!form.checkValidity()) {
         form.reportValidity()
@@ -1463,19 +1484,30 @@
       payload.etat = 'Soumis'
       payload.meta.submitted_at = new Date().toISOString()
 
-      // UX feedback
+      // Idempotency key: stable across retries of the SAME attempt (a retry re-sends the same id)
+      if (!self._pendingSubmissionId) self._pendingSubmissionId = genId()
+      payload.meta.submission_id = self._pendingSubmissionId
+
+      // Back up the payload locally BEFORE the POST so the entry is never lost on a failure
+      saveSubmitBackup(payload)
+
+      // UX feedback \u2014 Webflow submit buttons are <input>, whose label lives in .value (not .textContent)
       var submitBtn = form.querySelector('[type="submit"], .w-button[type="submit"]')
-      var originalText = submitBtn ? submitBtn.textContent : ''
-      if (submitBtn) {
-        submitBtn.disabled = true
-        submitBtn.textContent = 'Envoi en cours...'
+      var btnIsInput = submitBtn && submitBtn.tagName === 'INPUT'
+      var originalText = submitBtn ? (btnIsInput ? submitBtn.value : submitBtn.textContent) : ''
+      function setBtn(label, disabled) {
+        if (!submitBtn) return
+        submitBtn.disabled = !!disabled
+        if (btnIsInput) { submitBtn.value = label } else { submitBtn.textContent = label }
       }
+      self._inFlight = true
+      setBtn('Envoi en cours...', true)
 
       fetchWithTimeout(CONFIG.SUBMIT_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload)
-      }, 30000)
+      }, 45000)
         .then(function (res) {
           return res.text().then(function (text) {
             var json = {}
@@ -1483,6 +1515,8 @@
 
             if (res.ok) {
               console.log('[Submit] success', json)
+              clearSubmitBackup()
+              self._pendingSubmissionId = null
 
               // Update rec in URL if returned
               var rec = json && (json.rec || json.record_id || json.airtable_record_id)
@@ -1493,7 +1527,7 @@
                 draftSave.form = prevForm2
               }
 
-              // Show Webflow success message
+              // Show Webflow success message (button stays disabled \u2014 the form is hidden)
               var formWrapper = form.closest('.w-form')
               var successMsg = formWrapper && formWrapper.querySelector('.w-form-done')
               if (successMsg) {
@@ -1507,15 +1541,18 @@
         })
         .catch(function (err) {
           console.error('[Submit] error:', err)
+          self._inFlight = false
           var formWrapper = form.closest('.w-form')
           var errorMsg = formWrapper && formWrapper.querySelector('.w-form-fail')
           if (errorMsg) errorMsg.style.display = 'block'
-          alert("Erreur lors de l'envoi. Veuillez r\u00e9essayer.")
-        })
-        .then(function () {
-          if (submitBtn) {
-            submitBtn.disabled = false
-            submitBtn.textContent = originalText
+          // Data is preserved (localStorage backup + same submission_id reused on retry)
+          if (err && err.name === 'AbortError') {
+            // Timeout: the backend may still be processing. Do NOT push the user to resend (avoids duplicates).
+            setBtn(originalText, false)
+            alert("L'envoi prend plus de temps que pr\u00e9vu. Votre demande est peut-\u00eatre d\u00e9j\u00e0 enregistr\u00e9e : vous recevrez une confirmation par email. Inutile de la renvoyer tout de suite, vos donn\u00e9es sont conserv\u00e9es.")
+          } else {
+            setBtn(originalText, false)
+            alert("L'envoi a \u00e9chou\u00e9. Vos donn\u00e9es sont conserv\u00e9es : cliquez \u00e0 nouveau sur le bouton pour r\u00e9essayer.")
           }
         })
     }
