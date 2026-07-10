@@ -393,16 +393,22 @@
 
       document.addEventListener('click', function (e) {
         // Open modal when clicking a schema thumbnail
+        // preventDefault: thumb/cards are Webflow link blocks (<a href="#">) —
+        // the default navigation to the empty anchor scrolls the page to top
         if (e.target.closest('.schema-thumb')) {
           var picker = e.target.closest('.schema-picker')
-          if (picker) { openModal(picker); return }
+          if (picker) { e.preventDefault(); openModal(picker); return }
         }
 
         // Select a schema card from the modal
         var card = e.target.closest('.schema-card')
         if (card && modal.contains(card)) {
+          e.preventDefault()
           if (!self.currentPicker) return
-          var schemaId = card.getAttribute('data-schema-id') || card.dataset.schemaId || ''
+          // The <a> wrapper also carries .schema-card but data-schema-id lives
+          // on the parent div — resolve via the closest [data-schema-id]
+          var idHost = e.target.closest('[data-schema-id]') || card.closest('[data-schema-id]') || card
+          var schemaId = idHost.getAttribute('data-schema-id') || ''
           var img = card.querySelector('img')
           var imgUrl = img
             ? img.currentSrc || img.src || (img.getAttribute('srcset') || '').split(' ')[0] || img.getAttribute('data-src')
@@ -427,7 +433,10 @@
         }
 
         // Close modal
-        if (e.target.closest('.schema-close') || e.target === modal) closeModal()
+        if (e.target.closest('.schema-close') || e.target === modal) {
+          e.preventDefault()
+          closeModal()
+        }
       })
 
       document.addEventListener('keydown', function (e) {
