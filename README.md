@@ -42,6 +42,12 @@ Le fichier `src/domofen-forms.js` contient 9 modules :
 | `prefill` | Pre-remplit le formulaire depuis Airtable (via n8n) |
 | `draftSave` | Sauvegarde brouillon (POST direct au webhook n8n) |
 
+## Phase de compatibilité (identité déclarée)
+
+Jusqu'au **2026-09-15**, le drapeau `LEGACY_IDENTITY` reste vrai : `prefill`, `draft` et `submit` envoient encore `x-member-id` / `member_stack_id` en plus de `Authorization: Bearer`. Tant que ce drapeau est vrai, un appelant sans jeton est toujours servi, donc la faiblesse reste ouverte. Ce n'est pas un réglage de confort, c'est une dette datée. Passé cette date, le drapeau passe à faux et seule l'en-tête Bearer identifie le partenaire.
+
+Le fichier `domofen-forms.min.js` servi par jsDelivr n'est pas régénéré ici : le rebuild est un geste humain, plus tard dans la séquence de bascule.
+
 ## Backend
 
 Les webhooks pointent vers n8n (n8n.domofen.ch) :
