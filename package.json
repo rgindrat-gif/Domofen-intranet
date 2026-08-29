@@ -4,7 +4,8 @@
   "description": "Frontend JS pour l'intranet B2B Domofen (espace partenaires)",
   "scripts": {
     "build": "npx terser src/domofen-forms.js -o domofen-forms.min.js --compress --mangle",
-    "watch": "npx nodemon --watch src -e js --exec 'npm run build'"
+    "watch": "npx nodemon --watch src -e js --exec 'npm run build'",
+    "test": "node --test test/*.test.js"
   },
   "repository": {
     "type": "git",
@@ -14,6 +15,7 @@
   "license": "UNLICENSED",
   "private": true,
   "devDependencies": {
+    "jsdom": "^26.1.0",
     "terser": "^5.37.0"
   }
 }

@@ -22,6 +22,12 @@
     PREFILL_URL: 'https://n8n.domofen.ch/webhook/intranet/prefill',
     SAVE_DRAFT_URL: 'https://n8n.domofen.ch/webhook/intranet/draft',
     SUBMIT_URL: 'https://n8n.domofen.ch/webhook/intranet/submit',
+    DOCUMENT_URL: 'https://n8n.domofen.ch/webhook/intranet/document',
+
+    // Fin 2026-09-15. Tant que LEGACY_IDENTITY est vrai, un appelant sans jeton
+    // est toujours servi, donc la faiblesse reste ouverte. Ce n'est pas un
+    // réglage de confort, c'est une dette datée.
+    LEGACY_IDENTITY: true, LEGACY_IDENTITY_FIN: '2026-09-15',
 
     // Selecteurs DOM
     BTN_ADD_SELECTOR: '#btn-add-position',
@@ -75,6 +81,49 @@
     options = options || {}
     options.signal = controller.signal
     return fetch(url, options).finally(function () { clearTimeout(timer) })
+  }
+
+  // Three distinguishable token-acquisition states. Do not collapse absent
+  // (SDK said nobody is signed in) with indisponible (SDK missing, threw, or timed out).
+  var AUTH_ETAT = {
+    JETON: 'jeton',
+    ABSENT: 'absent',
+    INDISPONIBLE: 'indisponible'
+  }
+  var AUTH_MESSAGE = {
+    absent: 'Votre session a expir\u00e9. Veuillez vous reconnecter pour continuer.',
+    indisponible: 'La v\u00e9rification de votre session est momentan\u00e9ment indisponible. Ce n\u2019est pas une d\u00e9connexion : vous pouvez r\u00e9essayer.'
+  }
+  var DOCUMENT_MESSAGE = {
+    reconnecte: 'Veuillez vous reconnecter pour consulter ce document.',
+    interdit: 'Ce dossier n\u2019est pas le v\u00f4tre.'
+  }
+  var TOKEN_TIMEOUT_MS = 3000
+
+  function headersWithAuth(baseHeaders, auth, legacyMemberId) {
+    var headers = {}
+    if (baseHeaders) {
+      Object.keys(baseHeaders).forEach(function (key) {
+        headers[key] = baseHeaders[key]
+      })
+    }
+    if (auth && auth.etat === AUTH_ETAT.JETON && auth.jeton) {
+      headers.Authorization = 'Bearer ' + auth.jeton
+    }
+    if (CONFIG.LEGACY_IDENTITY && legacyMemberId !== undefined) {
+      headers['x-member-id'] = legacyMemberId || ''
+    }
+    return headers
+  }
+
+  function payloadForTransport(payload) {
+    if (CONFIG.LEGACY_IDENTITY || !payload || typeof payload !== 'object') return payload
+    var copy = {}
+    Object.keys(payload).forEach(function (key) {
+      if (key === 'member_stack_id' || key === 'msid') return
+      copy[key] = payload[key]
+    })
+    return copy
   }
 
   /** UUID v4 (crypto with fallback for older browsers) */
@@ -249,6 +298,8 @@
   // Reads Memberstack user data from DOM text elements into form fields
   // ---------------------------------------------------------------------------
   var memberstackData = {
+    lastAuth: null,
+
     init: function () {
       var map = function (srcId, fieldName) {
         var src = qs('#' + srcId + '_txt')
@@ -267,6 +318,104 @@
       document.addEventListener('DOMContentLoaded', function () {
         run()
         setTimeout(run, 300)
+      })
+    },
+
+    /** Get Memberstack member ID (v2 then v1 fallback) */
+    withMemberId: function (callback) {
+      var self = this
+      if (window.$memberstackDom && window.$memberstackDom.getCurrentMember) {
+        window.$memberstackDom.getCurrentMember()
+          .then(function (result) {
+            var id = (result && result.data && result.data.id) || ''
+            if (id) sessionStorage.setItem('domofen_msid', id)
+            callback(id)
+          })
+          .catch(function () { self.fallbackV1(callback) })
+      } else {
+        this.fallbackV1(callback)
+      }
+    },
+
+    fallbackV1: function (callback) {
+      if (window.MemberStack && window.MemberStack.onReady) {
+        window.MemberStack.onReady
+          .then(function (ms) {
+            var id = (ms && ms.member && ms.member.id) || ''
+            if (id) sessionStorage.setItem('domofen_msid', id)
+            callback(id)
+          })
+          .catch(function () { callback('') })
+      } else {
+        callback('')
+      }
+    },
+
+    /**
+     * Acquire the connected member JWT via the documented Memberstack v2 DOM method
+     * `getMemberCookie` (https://developers.memberstack.com/dom-package/playground).
+     * Resolves to one of three states: jeton | absent | indisponible.
+     */
+    acquireToken: function () {
+      var self = this
+      var controller = new AbortController()
+      var timer = setTimeout(function () { controller.abort() }, TOKEN_TIMEOUT_MS)
+      var finished = false
+
+      function settle(result) {
+        if (finished) return result
+        finished = true
+        clearTimeout(timer)
+        var etat = result && result.etat
+        self.lastAuth = {
+          etat: etat,
+          message: etat === AUTH_ETAT.JETON ? '' : (AUTH_MESSAGE[etat] || ''),
+          jeton: etat === AUTH_ETAT.JETON ? result.jeton : ''
+        }
+        return result
+      }
+
+      return new Promise(function (resolve) {
+        function done(result) {
+          resolve(settle(result))
+        }
+
+        controller.signal.addEventListener('abort', function () {
+          done({ etat: AUTH_ETAT.INDISPONIBLE })
+        })
+
+        var sdk = typeof window !== 'undefined' ? window.$memberstackDom : null
+        if (!sdk) {
+          done({ etat: AUTH_ETAT.INDISPONIBLE })
+          return
+        }
+
+        var raw
+        try {
+          if (typeof sdk.getMemberCookie === 'function') {
+            raw = sdk.getMemberCookie()
+          } else if (sdk.getMemberCookie != null) {
+            raw = sdk.getMemberCookie
+          } else {
+            done({ etat: AUTH_ETAT.INDISPONIBLE })
+            return
+          }
+        } catch (err) {
+          done({ etat: AUTH_ETAT.INDISPONIBLE })
+          return
+        }
+
+        Promise.resolve(raw)
+          .then(function (value) {
+            var token = typeof value === 'string' ? value : ''
+            if (token) done({ etat: AUTH_ETAT.JETON, jeton: token })
+            else done({ etat: AUTH_ETAT.ABSENT })
+          })
+          .catch(function () {
+            done({ etat: AUTH_ETAT.INDISPONIBLE })
+          })
+      }).finally(function () {
+        clearTimeout(timer)
       })
     }
   }
@@ -836,7 +985,7 @@
 
       this.initHydration()
       var self = this
-      this.withMemberId(function (memberId) {
+      memberstackData.withMemberId(function (memberId) {
         if (rec) self.runPrefill(rec, memberId)
       })
     },
@@ -847,34 +996,8 @@
       sessionStorage.removeItem('domofen_rec_fallback_ok')
     },
 
-    /** Get Memberstack member ID (v2 then v1 fallback) */
     withMemberId: function (callback) {
-      var self = this
-      if (window.$memberstackDom && window.$memberstackDom.getCurrentMember) {
-        window.$memberstackDom.getCurrentMember()
-          .then(function (result) {
-            var id = (result && result.data && result.data.id) || ''
-            if (id) sessionStorage.setItem('domofen_msid', id)
-            callback(id)
-          })
-          .catch(function () { self.fallbackV1(callback) })
-      } else {
-        this.fallbackV1(callback)
-      }
-    },
-
-    fallbackV1: function (callback) {
-      if (window.MemberStack && window.MemberStack.onReady) {
-        window.MemberStack.onReady
-          .then(function (ms) {
-            var id = (ms && ms.member && ms.member.id) || ''
-            if (id) sessionStorage.setItem('domofen_msid', id)
-            callback(id)
-          })
-          .catch(function () { callback('') })
-      } else {
-        callback('')
-      }
+      return memberstackData.withMemberId(callback)
     },
 
     /** Fetch prefill data from n8n and apply to form */
@@ -882,10 +1005,12 @@
       var self = this
       setHidden(this.form, 'member_stack_id', memberId || '')
 
-      fetchWithTimeout(CONFIG.PREFILL_URL + '?rec=' + encodeURIComponent(rec), {
-        method: 'GET',
-        headers: { 'x-member-id': memberId || '' }
-      }, 15000)
+      return memberstackData.acquireToken().then(function (auth) {
+        var headers = headersWithAuth({}, auth, memberId || '')
+        return fetchWithTimeout(CONFIG.PREFILL_URL + '?rec=' + encodeURIComponent(rec), {
+          method: 'GET',
+          headers: headers
+        }, 15000)
         .then(function (res) {
           if (!res.ok) throw new Error('HTTP ' + res.status)
           return res.json()
@@ -901,6 +1026,7 @@
             }
           }
         })
+      })
     },
 
     /** Apply fetched fields to the form */
@@ -1405,10 +1531,11 @@
         requiredFields.forEach(function (el) { el.setAttribute('required', '') })
       }, 100)
 
-      fetchWithTimeout(CONFIG.SAVE_DRAFT_URL, {
+      return memberstackData.acquireToken().then(function (auth) {
+      return fetchWithTimeout(CONFIG.SAVE_DRAFT_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: headersWithAuth({ 'Content-Type': 'application/json' }, auth),
+        body: JSON.stringify(payloadForTransport(payload))
       }, 30000)
         .then(function (res) {
           return res.text().then(function (text) {
@@ -1437,6 +1564,7 @@
         .then(function () {
           btn.disabled = false
         })
+      })
     }
   }
 
@@ -1512,10 +1640,11 @@
       self._inFlight = true
       setBtn('Envoi en cours...', true)
 
-      fetchWithTimeout(CONFIG.SUBMIT_URL, {
+      return memberstackData.acquireToken().then(function (auth) {
+      return fetchWithTimeout(CONFIG.SUBMIT_URL, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload)
+        headers: headersWithAuth({ 'Content-Type': 'application/json' }, auth),
+        body: JSON.stringify(payloadForTransport(payload))
       }, 45000)
         .then(function (res) {
           return res.text().then(function (text) {
@@ -1564,6 +1693,7 @@
             alert("L'envoi a \u00e9chou\u00e9. Vos donn\u00e9es sont conserv\u00e9es : cliquez \u00e0 nouveau sur le bouton pour r\u00e9essayer.")
           }
         })
+      })
     }
   }
 
@@ -1670,10 +1800,53 @@
     }
   }
 
+  /**
+   * Fetch a signed document URL for a dossier. Does not navigate.
+   * 401 and 403 are not network errors: they mean reconnect vs not-your-dossier.
+   */
+  function getDocumentUrl(dossierId) {
+    return memberstackData.acquireToken().then(function (auth) {
+      var headers = headersWithAuth({}, auth)
+      var url = CONFIG.DOCUMENT_URL + '?rec=' + encodeURIComponent(dossierId || '')
+      return fetchWithTimeout(url, { method: 'GET', headers: headers }, 15000)
+        .then(function (res) {
+          if (res.status === 401) {
+            return { ok: false, message: DOCUMENT_MESSAGE.reconnecte }
+          }
+          if (res.status === 403) {
+            return { ok: false, message: DOCUMENT_MESSAGE.interdit }
+          }
+          if (!res.ok) {
+            return { ok: false, message: AUTH_MESSAGE.indisponible }
+          }
+          return res.json().then(function (data) {
+            var signed = ''
+            if (data && typeof data === 'object') {
+              signed = data.url || data.signed_url || data.signedUrl || ''
+            }
+            return { ok: true, url: signed }
+          })
+        })
+        .catch(function () {
+          return { ok: false, message: AUTH_MESSAGE.indisponible }
+        })
+    })
+  }
+
   // ---------------------------------------------------------------------------
   // ENTRY POINT
   // ---------------------------------------------------------------------------
   global.DomofenForms = {
+    CONFIG: CONFIG,
+    AUTH_ETAT: AUTH_ETAT,
+    AUTH_MESSAGE: AUTH_MESSAGE,
+    DOCUMENT_MESSAGE: DOCUMENT_MESSAGE,
+    acquireMemberToken: function () { return memberstackData.acquireToken() },
+    getDocumentUrl: getDocumentUrl,
+    memberstackData: memberstackData,
+    prefill: prefill,
+    draftSave: draftSave,
+    submitHandler: submitHandler,
     init: function (options) {
       var flow = (options && options.flow) || 'demande'
 
