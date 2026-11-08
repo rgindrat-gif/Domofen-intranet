@@ -1651,7 +1651,12 @@
             var json = {}
             try { json = text ? JSON.parse(text) : {} } catch (e) { /* ignore */ }
 
-            if (res.ok) {
+            // 07.11.2026 (NUA-2418) : pendant la panne n8n du 06.11, le webhook a repondu 200 avec un
+            // corps VIDE alors que rien n'avait ete enregistre ; le formulaire a efface sa sauvegarde et
+            // affiche « envoye » (demande AMC Bois perdue). Le succes exige desormais la confirmation du
+            // serveur (ok: true ou l'identifiant d'enregistrement), pas seulement le code HTTP.
+            var confirmed = res.ok && json && (json.ok === true || json.rec || json.record_id || json.airtable_record_id)
+            if (confirmed) {
               console.log('[Submit] success', json)
               clearSubmitBackup()
               self._pendingSubmissionId = null
@@ -1673,7 +1678,7 @@
                 successMsg.style.display = 'block'
               }
             } else {
-              throw new Error('HTTP ' + res.status + ': ' + (json.message || text.substring(0, 200)))
+              throw new Error('HTTP ' + res.status + (res.ok ? ' sans confirmation du serveur' : '') + ': ' + (json.message || json.error || text.substring(0, 200)))
             }
           })
         })
