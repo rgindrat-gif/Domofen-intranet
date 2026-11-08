@@ -48,6 +48,8 @@ Jusqu'au **2026-09-15**, le drapeau `LEGACY_IDENTITY` reste vrai : `prefill`, `d
 
 Le fichier `domofen-forms.min.js` servi par jsDelivr n'est pas régénéré ici : le rebuild est un geste humain, plus tard dans la séquence de bascule.
 
+🔴 **08.11.2026 (NUA-2418)** : le fichier servi est construit depuis la source de `12a933d` (celle d'avant la bascule Memberstack #1) **plus le seul correctif #2** (succès sur confirmation du serveur). Il ne correspond donc PAS à `src/` de `main`, qui porte aussi #1. Vérifié : la source `12a933d` reproduit l'ancien fichier servi à l'octet près. Au moment de la bascule Memberstack, rebâtir depuis `main` comme prévu : #2 y est déjà.
+
 ## Backend
 
 Les webhooks pointent vers n8n (n8n.domofen.ch) :
